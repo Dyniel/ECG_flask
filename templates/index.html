@@ -14,6 +14,19 @@
     </form>
     <div id="status"></div>
     <div id="error"></div>
+
+    <!-- Time range selection -->
+    <div id="time-range" style="display:none;">
+        <h3>Select Time Range for Visualization</h3>
+        <label for="start-time">Start Time (HH:MM:SS):</label>
+        <input type="text" id="start-time" name="start-time" required>
+        <br>
+        <label for="end-time">End Time (HH:MM:SS):</label>
+        <input type="text" id="end-time" name="end-time" required>
+        <br>
+        <button id="visualize-btn">Visualize Data</button>
+    </div>
+
     <div id="plot"></div>
     <div id="stats">
         <h2>Statistics</h2>
@@ -44,38 +57,42 @@
                     document.getElementById('status').textContent = '';
                     document.getElementById('error').textContent = data.message;
                 } else {
-                    // Use the received time range to request the actual ECG data for visualization
-                    const file_path = data.file_path;
-                    const min_time = data.min_time;
-                    const max_time = data.max_time;
+                    // Show the time range input fields
+                    document.getElementById('time-range').style.display = 'block';
+                    document.getElementById('status').textContent = `File uploaded. Available time range is from ${data.min_time} to ${data.max_time}.`;
 
-                    document.getElementById('status').textContent = 'Loading ECG data...';
+                    // Handle visualization button click
+                    document.getElementById('visualize-btn').onclick = function() {
+                        const start_time = document.getElementById('start-time').value;
+                        const end_time = document.getElementById('end-time').value;
+                        document.getElementById('status').textContent = 'Loading ECG data...';
 
-                    // Request visualization data
-                    fetch('/visualize', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded',
-                        },
-                        body: `file_path=${encodeURIComponent(file_path)}&start_time=${encodeURIComponent(min_time)}&end_time=${encodeURIComponent(max_time)}`
-                    }).then(response => response.json()).then(data => {
-                        console.log('Full received data structure:', JSON.stringify(data, null, 2));
+                        // Request visualization data
+                        fetch('/visualize', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/x-www-form-urlencoded',
+                            },
+                            body: `file_path=${encodeURIComponent(data.file_path)}&start_time=${encodeURIComponent(start_time)}&end_time=${encodeURIComponent(end_time)}`
+                        }).then(response => response.json()).then(data => {
+                            console.log('Full received data structure:', JSON.stringify(data, null, 2));
 
-                        if (data.status === 'error') {
+                            if (data.status === 'error') {
+                                document.getElementById('status').textContent = '';
+                                document.getElementById('error').textContent = data.message;
+                            } else if (data.data && data.peaks) {
+                                document.getElementById('status').textContent = 'Processing file...';
+                                plotData(data);
+                            } else {
+                                document.getElementById('status').textContent = '';
+                                document.getElementById('error').textContent = 'Unexpected data structure received from server.';
+                                console.error('Received data:', data);
+                            }
+                        }).catch(error => {
                             document.getElementById('status').textContent = '';
-                            document.getElementById('error').textContent = data.message;
-                        } else if (data.data && data.peaks) {
-                            document.getElementById('status').textContent = 'Processing file...';
-                            plotData(data);
-                        } else {
-                            document.getElementById('status').textContent = '';
-                            document.getElementById('error').textContent = 'Unexpected data structure received from server.';
-                            console.error('Received data:', data);
-                        }
-                    }).catch(error => {
-                        document.getElementById('status').textContent = '';
-                        document.getElementById('error').textContent = 'An error occurred: ' + error.message;
-                    });
+                            document.getElementById('error').textContent = 'An error occurred: ' + error.message;
+                        });
+                    };
                 }
             }).catch(error => {
                 document.getElementById('status').textContent = '';
