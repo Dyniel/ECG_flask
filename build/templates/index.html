@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ECG Data Visualization</title>
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+</head>
+<body>
+    <h1>ECG Data Visualization</h1>
+    <form id="upload-form" enctype="multipart/form-data">
+        <input type="file" id="file-input" name="file" required>
+        <button type="submit">Upload File</button>
+    </form>
+    <div id="status"></div>
+    <div id="error"></div>
+    <div id="plot"></div>
+    <div id="stats">
+        <h2>Statistics</h2>
+        <p id="angle-info">Angle information: N/A</p>
+        <p id="fit-info">Sinusoidal fit information: N/A</p>
+        <button id="download-stats" style="display:none;">Download Statistics and Data Points</button>
+    </div>
+
+    <script>
+        let shownData = [];
+        let shownPeaks = [];
+
+        document.getElementById('upload-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+            document.getElementById('status').textContent = 'Uploading file...';
+            document.getElementById('error').textContent = '';
+            var formData = new FormData();
+            var fileInput = document.getElementById('file-input');
+            formData.append('file', fileInput.files[0]);
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            }).then(response => response.json()).then(data => {
+                console.log("Received data from server:", data);
+
+                if (data.status === 'error') {
+                    document.getElementById('status').textContent = '';
+                    document.getElementById('error').textContent = data.message;
+                } else {
+                    // Use the received time range to request the actual ECG data for visualization
+                    const file_path = data.file_path;
+                    const min_time = data.min_time;
+                    const max_time = data.max_time;
+
+                    document.getElementById('status').textContent = 'Loading ECG data...';
+
+                    // Request visualization data
+                    fetch('/visualize', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        body: `file_path=${encodeURIComponent(file_path)}&start_time=${encodeURIComponent(min_time)}&end_time=${encodeURIComponent(max_time)}`
+                    }).then(response => response.json()).then(data => {
+                        console.log('Full received data structure:', JSON.stringify(data, null, 2));
+
+                        if (data.status === 'error') {
+                            document.getElementById('status').textContent = '';
+                            document.getElementById('error').textContent = data.message;
+                        } else if (data.data && data.peaks) {
+                            document.getElementById('status').textContent = 'Processing file...';
+                            plotData(data);
+                        } else {
+                            document.getElementById('status').textContent = '';
+                            document.getElementById('error').textContent = 'Unexpected data structure received from server.';
+                            console.error('Received data:', data);
+                        }
+                    }).catch(error => {
+                        document.getElementById('status').textContent = '';
+                        document.getElementById('error').textContent = 'An error occurred: ' + error.message;
+                    });
+                }
+            }).catch(error => {
+                document.getElementById('status').textContent = '';
+                document.getElementById('error').textContent = 'An error occurred: ' + error.message;
+            });
+        });
+
+        function plotData(data) {
+            if (!data.data || !data.peaks) {
+                console.error('Data or peaks missing:', data);
+                document.getElementById('error').textContent = 'Data or peaks are missing in the response.';
+                return;
+            }
+
+            var timestamps = data.data.map(item => new Date(item.Timestamp));
+            var values = data.data.map(item => item.Value);
+            var peakTimestamps = data.peaks.map(item => new Date(item.Timestamp));
+            var peakValues = data.peaks.map(item => item.Value);
+
+            shownData = data.data;
+            shownPeaks = data.peaks;
+
+            var trace = {
+                x: timestamps,
+                y: values,
+                mode: 'lines',
+                type: 'scatter',
+                name: 'ECG Signal'
+            };
+            var peakTrace = {
+                x: peakTimestamps,
+                y: peakValues,
+                mode: 'markers+lines',
+                type: 'scatter',
+                name: 'R-Peaks',
+                marker: { color: 'red', size: 8 },
+                line: { color: 'red', dash: 'solid' }
+            };
+            var layout = {
+                title: 'ECG Signal over Time',
+                xaxis: {
+                    title: 'Time',
+                    type: 'date'
+                },
+                yaxis: {
+                    title: 'Signal (µV)'
+                }
+            };
+            Plotly.newPlot('plot', [trace, peakTrace], layout);
+
+            // Handle zoom event
+            document.getElementById('plot').on('plotly_relayout', function(eventdata) {
+                if(eventdata['xaxis.range[0]'] && eventdata['xaxis.range[1]']) {
+                    var xRange = [new Date(eventdata['xaxis.range[0]']), new Date(eventdata['xaxis.range[1]'])];
+                    calculateStatistics(xRange);
+                }
+            });
+        }
+
+        function calculateStatistics(xRange) {
+            var selectedValues = shownData.filter((value) => {
+                var timestamp = new Date(value.Timestamp);
+                return timestamp >= xRange[0] && timestamp <= xRange[1];
+            });
+            var selectedPeaks = shownPeaks.filter((peak) => {
+                var timestamp = new Date(peak.Timestamp);
+                return timestamp >= xRange[0] && timestamp <= xRange[1];
+            });
+
+            // Calculate angles between peaks
+            let angles = [];
+            for (let i = 1; i < selectedPeaks.length; i++) {
+                let dx = (new Date(selectedPeaks[i].Timestamp) - new Date(selectedPeaks[i - 1].Timestamp)) / 1000; // time difference in seconds
+                let dy = selectedPeaks[i].Value - selectedPeaks[i - 1].Value;
+                let angle = Math.atan2(dy, dx) * (180 / Math.PI);
+                angles.push(angle);
+            }
+            let avgAngle = angles.reduce((a, b) => a + b, 0) / angles.length;
+            document.getElementById('angle-info').textContent = `Average angle between peaks: ${avgAngle.toFixed(2)} degrees`;
+
+            // Calculate sinusoidal fit (placeholder, extend as needed)
+            let fitInfo = "N/A";
+            document.getElementById('fit-info').textContent = `Fit information: ${fitInfo}`;
+
+            document.getElementById('download-stats').style.display = 'block';
+
+            document.getElementById('download-stats').onclick = function() {
+                downloadCSV(selectedValues, selectedPeaks, angles);
+            };
+        }
+
+        function downloadCSV(values, peaks, angles) {
+            let csvContent = "data:text/csv;charset=utf-8,";
+            csvContent += "Timestamp,Value,Peak Timestamp,Peak Value,Angle\n";
+            for (let i = 0; i < values.length; i++) {
+                let peakInfo = peaks[i] ? `${peaks[i].Timestamp},${peaks[i].Value}` : ",,";
+                let angleInfo = angles[i] ? `${angles[i]}` : "";
+                csvContent += `${values[i].Timestamp},${values[i].Value},${peakInfo},${angleInfo}\n`;
+            }
+
+            var encodedUri = encodeURI(csvContent);
+            var link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", "ecg_statistics.csv");
+            document.body.appendChild(link);
+            link.click();
+        }
+    </script>
+</body>
+</html>
